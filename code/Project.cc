@@ -1,215 +1,3 @@
-// ###################################################################### //
-//                         Network topology                               //
-// ---------------------------------------------------------------------- //
-//                                                                        //
-// This example shows two L2 LANs connected by a WAN link and illustrates //
-// a network that has multiple L2 switches between L3 routers.            //
-//                                                                        //
-// It serves as a test case to verify a patch to global-router-interface  //
-// that fixes a previous bug (#2102 in the ns-3 tracker) but is also      //
-// another example program.                                               //
-//                                                                        //
-// The LANs are "top" [192.168.1/24] and "bottom" [192.168.2/24].         //
-// Each LAN network is interconnected by several L2 switches, and each    //
-// LAN has its own router to act as a gateway with the WAN. Each LAN      //
-// has two endpoints upon which is installed a UDP echo client or server  //
-// that are used to test connectivity over the LANs & WAN.                //
-//                                                                        //
-// One pair of UDP endpoints (t3 and b3) have LAN connections with only   //
-// one switch between them and their local routers. This path works with  //
-// unpatched ns3 code (3.24 & earlier) as well as with the patch applied. //
-//                                                                        //
-// Another pair of endpoints (t2 and b2) have LAN connections with        //
-// a chain of multiple switches between them and their local router.      //
-// This path will only work after applying the associated patch.          //
-//                                                                        //
-// The LAN links are modeled by half-duplex Ethernet CSMA links which     //
-// have command-line-configurable data rate and latency.                  //
-//                                                                        //
-// There are two types of CSMA links: 100Mbit and 10Mbit. The 100Mbit     //
-// links are called csmaX, are denoted by [X] in the diagram and can      //
-// be controlled with the --csmaXRate and --csmaXDelay command line args. //
-// The 10Mbit links are called csmaY, are denoted by [Y] in the diagram   //
-// and can be controlled with the --csmaYRate and --csmaYDelay command    //
-// line arguments. Both the top and bottom LAN have a mixture of          //
-// 100Mbit/s and 10Mbit/s links.                                          //
-//                                                                        //
-// The WAN is modeled by a point-to-point link which has configurable     //
-// data rate and latency. Unlike many typical home/work networks,         //
-// the routers do not perform NAT.                                        //
-//                                                                        //
-// The WAN link is denoted by [P] in the diagram, and the                 //
-// speed and latency can be set from the command line with the            //
-// --p2pRate and --p2pDelay options. The default for this link is 5Mbit/s //
-// and 50ms delay                                                         //
-//                                                                        //
-// Note: Names in parenthesis after NetDevices are pcap tap locations.    //
-//                                                                        //
-// ---------------------------------------------------------------------- //
-//                                                                        //
-//   192.168.  192.168.                                                   //
-//    .1.2      .1.3                                                      //
-//  ---------  ---------                                                  //
-//  |  t2   |  |  t3   |                                                  //
-//  |  UDP  |  |  UDP  |                                                  //
-//  |  echo |  |  echo |    Node t2 is a UDP echo client (multi-switch)   //
-//  | client|  | server|    Node t3 is a UDP echo server (single-switch)  //
-//  ---------  ---------                                                  //
-//   CSMA(t2)   CSMA(t3)                                                  //
-//     [X]        [X]                                                     //
-//     [X]        [X]                                                     //
-//    CSMA        [X]                                                     //
-//  ---------     [X]                                                     //
-//  |  ts4  |     [X]        Nodes ts1, ts2, ts3 and ts4 are L2 switches  //
-//  |  (sw) |     [X]        The top LAN is subnet 192.168.1.*            //
-//  ---------     [X]                                                     //
-//    CSMA        [X]        The long chain of switches is designed       //
-//     [Y]        [X]        to test whether global-router-interface      //
-//     [Y]        [X]        can fully enumerate an IP subnet that has    //
-//    CSMA        [X]        multiple interconnected L2 switches.         //
-//  ---------     [X]        The problem is documented in Bug #2102.      //
-//  |  ts3  |     [X]                                                     //
-//  |  (sw) |     [X]                                                     //
-//  ---------     [X]                                                     //
-//    CSMA        [X]                                                     //
-//     [X]        [X]                                                     //
-//     [X]        [X]                                                     //
-//    CSMA        [X]                                                     //
-//  ---------     [X]                                                     //
-//  |  ts2  |     [X]                                                     //
-//  |  (sw) |     [X]                                                     //
-//  ---------     [X]                                                     //
-//    CSMA        [X]                                                     //
-//     [Y]        [X]                                                     //
-//     [Y]        [X]                                                     //
-//    CSMA       CSMA                                                     //
-//   ------------------                                                   //
-//   |  ts1 (switch)  |                                                   //
-//   ------------------                                                   //
-//          CSMA                                                          //
-//           [Y]                                                          //
-//           [Y]                                                          //
-//          CSMA(trlan)    192.168.1.1                                    //
-//   ------------------                                                   //
-//   |  tr (router)   |    Node tr is an L3 router                        //
-//   ------------------      (between 192.168.1.* & 76.1.1.*)             //
-//           P2P(trwan)    76.1.1.1                                       //
-//           [P]                                                          //
-//           [P]                                                          //
-//           [P]                                                          //
-//           [P]                                                          //
-//           [P]           The WAN is 76.1.1.*                            //
-//           [P]                                                          //
-//           [P]                                                          //
-//           [P]                                                          //
-//           P2P(brwan)    76.1.1.2                                       //
-//   ------------------                                                   //
-//   |  br (router)   |    Node br is an L3 router                        //
-//   ------------------      (between 192.168.2.* & 76.1.1.*)             //
-//          CSMA(brlan)    192.168.2.1                                    //
-//           [X]                                                          //
-//           [X]                                                          //
-//          CSMA                                                          //
-//   ------------------     Nodes bs1 to bs5 are L2 switches              //
-//   |  bs1 (switch)  |     The bottom LAN is subnet 192.168.2.*          //
-//   ------------------                                                   //
-//    CSMA       CSMA                                                     //
-//     [Y]        [Y]                                                     //
-//     [Y]        [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//  ---------     [Y]                                                     //
-//  | bs2   |     [Y]                                                     //
-//  | (sw)  |     [Y]                                                     //
-//  ---------     [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//     [X]        [Y]                                                     //
-//     [X]        [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//  ---------     [Y]                                                     //
-//  | bs3   |     [Y]                                                     //
-//  | (sw)  |     [Y]                                                     //
-//  ---------     [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//     [Y]        [Y]                                                     //
-//     [Y]        [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//  ---------     [Y]                                                     //
-//  | bs4   |     [Y]                                                     //
-//  | (sw)  |     [Y]                                                     //
-//  ---------     [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//     [X]        [Y]                                                     //
-//     [X]        [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//  ---------     [Y]                                                     //
-//  | bs5   |     [Y]                                                     //
-//  | (sw)  |     [Y]                                                     //
-//  ---------     [Y]                                                     //
-//    CSMA        [Y]                                                     //
-//     [Y]        [Y]                                                     //
-//     [Y]        [Y]                                                     //
-//    CSMA(b2)   CSMA(b3)                                                 //
-//  ---------  ---------                                                  //
-//  |  b2   |  |  b3   |                                                  //
-//  |  UDP  |  |  UDP  |                                                  //
-//  |  echo |  |  echo |    Node b2 is a UDP echo server (multi-switch)   //
-//  | server|  | client|    Node b3 is a UDP echo client (single-switch)  //
-//  ---------  ---------                                                  //
-//   192.168.  192.168.                                                   //
-//    .2.2      .2.3                                                      //
-//                                                                        //
-// ---------------------------------------------------------------------- //
-//                            Explanation                                 //
-// ---------------------------------------------------------------------- //
-//                                                                        //
-// UDP packet flows are configured between nodes on the top and bottom    //
-// LANs (using UDP echo client & server).                                 //
-//                                                                        //
-// The network carrying the "multi switch" UDP flow is connected with     //
-// multiple L2 switches between L3 nodes so it should only work if the    //
-// global-router-interface source code properly supports bridging.        //
-//                                                                        //
-// The network carrying the "single switch" UDP flow is connected with    //
-// only one L2 switch between L3 nodes so it should work with or          //
-// without the patch                                                      //
-//                                                                        //
-// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =  //
-// Traffic summary:                                                       //
-// ---------------------------------------------------------------------- //
-//                                                                        //
-// - UDP flow  from t2 (192.168.1.2) to b2 (192.168.2.2) [Multi Switch]   //
-//             from b3 (192.168.2.3) to t3 (192.168.1.3) [Single Switch]  //
-//                                                                        //
-// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =  //
-// Node List & IP addresses assigned during simulation                    //
-// ---------------------------------------------------------------------- //
-//      t2     : 192.168.1.2 : Top multi-switch UDP echo client           //
-//      t3     : 192.168.1.3 : Top single-switch UDP echo server          //
-//             :                                                          //
-//      ts1    : <no IP>     : Top switch 1 (bridge)                      //
-//      ts2    : <no IP>     : Top switch 2 (bridge)                      //
-//      ts3    : <no IP>     : Top switch 3 (bridge)                      //
-//      ts4    : <no IP>     : Top switch 4 (bridge)                      //
-//             :                                                          //
-//      tr     : 192.168.1.1 : Router connecting top LAN (192.168.1.*)    //
-//             : 76.1.1.1    :                to the WAN                  //
-//             :                                                          //
-//      br     : 76.1.1.2    : Router connecting the WAN                  //
-//             : 192.168.2.1 :                to bot LAN (192.168.2.*)    //
-//             :                                                          //
-//      bs1    : <no IP>     : Bottom switch 1 (bridge)                   //
-//      bs2    : <no IP>     : Bottom switch 2 (bridge)                   //
-//      bs3    : <no IP>     : Bottom switch 3 (bridge)                   //
-//      bs4    : <no IP>     : Bottom switch 4 (bridge)                   //
-//      bs5    : <no IP>     : Bottom switch 5 (bridge)                   //
-//             :                                                          //
-//      b2     : 192.168.2.2 : Bottom multi-switch UDP echo server        //
-//      b3     : 192.168.2.3 : Bottom single-switch UDP echo client       //
-//             :                                                          //
-// ---------------------------------------------------------------------- //
-// Author:     Chip Webb <ns3 (a) chipwebb dot com>                       //
-// ###################################################################### //
-
 #include <iostream>
 #include <fstream>
 
@@ -224,9 +12,6 @@
 
 using namespace ns3;
 
-// ########################################################################
-// Main routine
-// ########################################################################
 NS_LOG_COMPONENT_DEFINE ("ProjectAkhir_Milestone-2");
 
 #define vssearch(loc,vec) std::find ((vec).begin (), (vec).end (), (loc)) != (vec).end ()
@@ -234,9 +19,6 @@ NS_LOG_COMPONENT_DEFINE ("ProjectAkhir_Milestone-2");
 int
 main (int argc, char *argv[])
 {
-  // ----------------------------------------------------------------------
-  // Default values for command line arguments
-  // ----------------------------------------------------------------------
   bool        verbose              = true;
 
   int         simDurationSeconds   = 60;
@@ -259,9 +41,6 @@ main (int argc, char *argv[])
   uint16_t    udpEchoPort          = 9;  // The well-known UDP echo port
 
 
-  // ----------------------------------------------------------------------
-  // Create command line options and get them
-  // ----------------------------------------------------------------------
   CommandLine cmd;
 
   cmd.Usage    ("NOTE: valid --pcap arguments are: 't2,t3,b2,b3,trlan,trwan,brlan,brwan'");
@@ -287,19 +66,12 @@ main (int argc, char *argv[])
 
   cmd.Parse (argc, argv);
 
-  // --------------------------------------------------------------------
-  // Users may find it convenient to turn on explicit debugging
-  // for selected modules; the below lines suggest how to do this
-  // --------------------------------------------------------------------
-  if (verbose)
+ if (verbose)
     {
       LogComponentEnable ("ProjectAkhir_Milestone-2", LOG_LEVEL_INFO);
     }
 
-    // ======================================================================
-  // Create the nodes & links required for the topology shown in comments above.
-  // ----------------------------------------------------------------------
-  NS_LOG_INFO ("INFO: Create nodes.");    // - - - - - - - - - - - - - - - -
+ NS_LOG_INFO ("INFO: Create nodes.");    // - - - - - - - - - - - - - - - -
                                           // Node IP     : Description
                                           // - - - - - - - - - - - - - - - -
   Ptr<Node> t3  = CreateObject<Node> ();  // 192.168.1.3 : Top single-switch   udp echo server
@@ -413,41 +185,41 @@ main (int argc, char *argv[])
   // ----------------------------------------------------------------------
   NS_LOG_INFO ("L2: Connect nodes on top LAN together with half-duplex CSMA links.");
 
-  // Ini Node Client ke Switch TOP
+  // Node Client to Switch TOP
   NetDeviceContainer link_t2_ts1   = csmaX.Install (NodeContainer (t2,  ts1));
   NetDeviceContainer link_t3_ts1   = csmaX.Install (NodeContainer (t3,  ts1));
   NetDeviceContainer link_t4_ts1   = csmaX.Install (NodeContainer (t4,  ts1));
   NetDeviceContainer link_t5_ts1   = csmaX.Install (NodeContainer (t5,  ts1));
-  // Ini Switch ts1 ke Router tr
+  // Switch ts1 to Router tr
   NetDeviceContainer link_tr_ts1   = csmaY.Install (NodeContainer (tr,  ts1));
 
   NS_LOG_INFO ("L2: Connect nodes on bottom LAN together with half-duplex CSMA links.");
 
-  // Ini Node Client ke Switch BOTTTOM
+  // Node Client to Switch BOTTTOM
   NetDeviceContainer link_b2_bs1   = csmaY.Install (NodeContainer (b2,  bs1));
   NetDeviceContainer link_b3_bs1   = csmaY.Install (NodeContainer (b3,  bs1));
   NetDeviceContainer link_b4_bs1   = csmaY.Install (NodeContainer (b4,  bs1));
   NetDeviceContainer link_b5_bs1   = csmaY.Install (NodeContainer (b5,  bs1));
 
-  // Ini Switch ke Router
+  // Switch to Router
   NetDeviceContainer link_br_bs1   = csmaX.Install (NodeContainer (br,  bs1));
   
-  // Ini Node Client ke Switch RIGHT
+  // Node Client to Switch RIGHT
   NetDeviceContainer link_r2_rs1   = csmaY.Install (NodeContainer (r2,  rs1));
   NetDeviceContainer link_r3_rs1   = csmaY.Install (NodeContainer (r3,  rs1));
   NetDeviceContainer link_r4_rs1   = csmaY.Install (NodeContainer (r4,  rs1));
   NetDeviceContainer link_r5_rs1   = csmaY.Install (NodeContainer (r5,  rs1));
 
-  // Ini Switch ke Router
+  // Switch to Router
   NetDeviceContainer link_rr_rs1   = csmaX.Install (NodeContainer (rr,  rs1));
 
-  // Ini Node Client ke Switch LEFT
+  // Node Client to Switch LEFT
   NetDeviceContainer link_l2_ls1   = csmaY.Install (NodeContainer (l2,  ls1));
   NetDeviceContainer link_l3_ls1   = csmaY.Install (NodeContainer (l3,  ls1));
   NetDeviceContainer link_l4_ls1   = csmaY.Install (NodeContainer (l4,  ls1));
   NetDeviceContainer link_l5_ls1   = csmaY.Install (NodeContainer (l5,  ls1));
 
-  // Ini Switch ke Router
+  // Switch to Router
   NetDeviceContainer link_lr_ls1   = csmaX.Install (NodeContainer (lr,  ls1));
 
   // ======================================================================
@@ -465,7 +237,7 @@ main (int argc, char *argv[])
   // ----------------------------------------------------------------------
   // Now, connect top router to bottom router with a p2p WAN link
   // ----------------------------------------------------------------------
-  // Ini Untuk P2P Router ke Router
+  // P2P Router to Router
   // ---------------------------------------------------------------------
   NS_LOG_INFO ("L2: Connect the routers together with the Point-to-Point WAN link.");
 
